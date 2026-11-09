@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: paw-library
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: STORAGE_DIR
+        value: /var/data
+    disk:
+      name: paw-library-data
+      mountPath: /var/data
+      sizeGB: 10
