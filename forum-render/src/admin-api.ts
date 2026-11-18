@@ -19,7 +19,7 @@ export async function GET(req:Request){try{
  if(section==='overview'){
   const start=Math.floor((Date.now()+28800000)/86400000)*86400000-28800000;
   const counts=await db().prepare('SELECT (SELECT count(*) FROM accounts) AS members,(SELECT count(*) FROM posts p WHERE p.deleted=0 AND p.moderated=0 AND EXISTS(SELECT 1 FROM forum_boards b WHERE b.name=p.board AND b.visible=1)) AS posts,(SELECT count(*) FROM replies r JOIN posts p ON p.id=r.post_id WHERE r.deleted=0 AND r.moderated=0 AND p.deleted=0 AND p.moderated=0 AND EXISTS(SELECT 1 FROM forum_boards b WHERE b.name=p.board AND b.visible=1)) AS replies,(SELECT count(*) FROM posts WHERE moderated=1 AND deleted=0) AS hidden_posts,(SELECT count(*) FROM reports WHERE status=?) AS open_reports,(SELECT count(*) FROM posts WHERE created>=?) AS today_posts,(SELECT count(*) FROM replies WHERE created>=?) AS today_replies').bind('open',start,start).first();
-  const recent=await db().prepare('SELECT id,title,author,board,created,moderated,deleted FROM posts ORDER BY created DESC LIMIT 8').all();return json({counts,recent:recent.results,role});
+  const recent=await db().prepare('SELECT id,title,author,board,created,moderated,deleted,admin_deleted FROM posts ORDER BY created DESC LIMIT 8').all();return json({counts,recent:recent.results,role});
  }
  if(section==='posts'||section==='replies'){
   const reply=section==='replies',a=reply?'r':'p',values:any[]=[];let where='1=1';
@@ -73,6 +73,27 @@ export async function POST(req:Request){try{
  }
  if(!role)fail('此账号没有后台权限',403);
  const id=clean(x.id,150);
+ if(action==='post_delete'){
+  requireHigh(role);const all=x.all===true;
+  if(all){requireOwner(role);if(x.confirm!=='删除全部帖子')fail('请输入“删除全部帖子”确认操作')}
+  const ids=all?[]:[...new Set(Array.isArray(x.ids)?x.ids:[id])];
+  if(!all&&(!ids.length||ids.length>100||ids.some(v=>typeof v!=='string'||!v||v.length>150)))fail('请选择1至100篇帖子');
+  const where='deleted=0'+(all?'':' AND id IN ('+ids.map(()=>'?').join(',')+')');
+  const reason=clean(x.reason,300);if(reason.length<2)fail('请填写至少2字的删除说明');
+  const result=await db().batch([
+   db().prepare('UPDATE posts SET deleted=1,admin_deleted=1 WHERE '+where).bind(...ids),
+   audit(user,all?'posts_delete_all':'post_delete',all?null:ids.join(','),{all,ids,reason})
+  ]);return json({ok:true,deleted:Number(result[0].meta.changes)});
+ }
+ if(action==='post_restore'){
+  requireHigh(role);
+  const result=await db().batch([
+   db().prepare('UPDATE posts SET deleted=0,admin_deleted=0 WHERE id=? AND deleted=1 AND admin_deleted=1').bind(id),
+   audit(user,'post_restore',id)
+  ]);
+  if(!result[0].meta.changes)fail('只能恢复由管理员删除的帖子',409);
+  return json({ok:true});
+ }
  if(action==='change_password'){
   if(!await limit('admin-password:'+user.id,8))fail('尝试次数过多，请稍后重试',429);
   if(typeof x.currentPassword!=='string'||x.currentPassword.length>128||typeof x.newPassword!=='string'||x.newPassword.length<12||x.newPassword.length>128||x.newPassword.trim().length<12)fail('新密码请填写12至128位');
