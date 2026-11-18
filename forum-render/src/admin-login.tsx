@@ -1,0 +1,8 @@
+import React,{useState} from 'react';
+import {Eye,EyeOff,LockKeyhole} from 'lucide-react';
+
+export default function AdminLogin({onSuccess}:{onSuccess:()=>void}){
+ const [username,setUsername]=useState(''),[password,setPassword]=useState(''),[visible,setVisible]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ async function login(e:React.FormEvent){e.preventDefault();if(busy)return;setBusy(true);setError('');try{const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'admin_login',username,password})});const data=await r.json();if(!r.ok)throw Error(data.error||'登录失败');setPassword('');onSuccess()}catch(e:any){setError(e.message||'暂时无法登录，请稍后重试')}finally{setBusy(false)}}
+ return <form className="admin-password-login" onSubmit={login}><label className="field-label">管理员账号<input aria-label="管理员账号" name="username" autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} placeholder="请输入管理员账号" required maxLength={24}/></label><label className="field-label">登录密码<div className="admin-password-field"><input aria-label="登录密码" name="password" type={visible?'text':'password'} autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="请输入密码" required maxLength={128}/><button type="button" aria-label={visible?'隐藏密码':'显示密码'} onClick={()=>setVisible(v=>!v)}>{visible?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></label>{error&&<p role="alert" className="auth-error">{error}</p>}<button className="primary admin-full" disabled={busy}><LockKeyhole size={16}/>{busy?'正在登录…':'登录管理后台'}</button><p className="admin-login-note">仅站长、管理员和版主账号可登录后台。</p></form>
+}

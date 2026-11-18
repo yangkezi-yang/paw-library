@@ -8,6 +8,9 @@ import * as notifications from './notifications-api';
 import * as admin from './admin-api';
 import * as community from './community-store';
 import {health,close} from './database';
+import {initializeAdminAccount} from './admin-account';
+
+await initializeAdminAccount();
 
 const root=resolve(new URL('./public/',import.meta.url).pathname);
 const port=Number(process.env.PORT||3000);

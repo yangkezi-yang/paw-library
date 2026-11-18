@@ -1,5 +1,5 @@
 import {env} from './database';
-import {getForumUser,sameOrigin,sha,same,limit} from './forum-auth';
+import {getForumUser,sameOrigin,sha,same,limit,passwordHash,randomSecret,createSession,PASSWORD_ITERATIONS} from './forum-auth';
 import {audit,roleFor,controlFor,allBoards,getBoard,settings,defaults} from './community-store';
 const db=()=>env.DB;
 const json=(data:any,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
@@ -73,6 +73,20 @@ export async function POST(req:Request){try{
  }
  if(!role)fail('此账号没有后台权限',403);
  const id=clean(x.id,150);
+ if(action==='change_password'){
+  if(!await limit('admin-password:'+user.id,8))fail('尝试次数过多，请稍后重试',429);
+  if(typeof x.currentPassword!=='string'||x.currentPassword.length>128||typeof x.newPassword!=='string'||x.newPassword.length<12||x.newPassword.length>128||x.newPassword.trim().length<12)fail('新密码请填写12至128位');
+  const account=await db().prepare('SELECT password_hash,salt,iterations FROM accounts WHERE user_id=?').bind(user.id).first<any>();
+  if(!account||!same(await passwordHash(x.currentPassword,account.salt,Number(account.iterations)),account.password_hash))fail('当前密码不正确',403);
+  if(x.currentPassword===x.newPassword)fail('新密码不能与当前密码相同');
+  const salt=randomSecret(16),hash=await passwordHash(x.newPassword,salt);
+  const changed=await db().batch([
+   db().prepare('UPDATE accounts SET password_hash=?,salt=?,iterations=? WHERE user_id=? AND password_hash=?').bind(hash,salt,PASSWORD_ITERATIONS,user.id,account.password_hash),
+   db().prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id),audit(user,'change_password',user.id)
+  ]);
+  if(!changed[0].meta.changes)fail('密码已发生变更，请重新登录',409);
+  const response=json({ok:true,passwordChanged:true});for(const c of await createSession(req,user.id))response.headers.append('Set-Cookie',c);return response;
+ }
  if(action==='post_flag'||action==='reply_flag'){
   const table=action==='post_flag'?'posts':'replies';const allowed=table==='posts'?['pinned','featured','locked','moderated']:['moderated'];if(!allowed.includes(x.field)||![0,1].includes(x.value))fail('操作参数不正确');
   const row=await db().prepare(`SELECT id,deleted FROM ${table} WHERE id=?`).bind(id).first<any>();if(!row)fail('内容不存在',404);if(row.deleted)fail('作者已删除的内容不能重新公开');
