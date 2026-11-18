@@ -1,0 +1,17 @@
+import {env} from './database';
+
+export const SESSION_COOKIE='bwj_session';
+export const SESSION_SECONDS=30*24*60*60;
+export const PASSWORD_ITERATIONS=100000;
+export const authDb=()=>{if(!env.DB)throw new Error('数据库暂不可用');return env.DB};
+export function cookies(req:Request){const c:Record<string,string>={};for(const p of (req.headers.get('cookie')||'').split(';')){const i=p.indexOf('=');if(i>0)c[p.slice(0,i).trim()]=p.slice(i+1).trim()}return c}
+export function randomSecret(n=32){return Array.from(crypto.getRandomValues(new Uint8Array(n)),b=>b.toString(16).padStart(2,'0')).join('')}
+export async function sha(value:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('')}
+export async function passwordHash(password:string,salt:string,iterations=PASSWORD_ITERATIONS){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations,hash:'SHA-256'},key,256);return Array.from(new Uint8Array(bits),b=>b.toString(16).padStart(2,'0')).join('')}
+export function same(a:string,b:string){let different=a.length^b.length;for(let i=0;i<Math.max(a.length,b.length);i++)different|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return different===0}
+export function cookie(req:Request,name:string,value:string,seconds=SESSION_SECONDS){return `${name}=${value}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${seconds}${new URL(req.url).protocol==='https:'?'; Secure':''}`}
+export type ForumUser={id:string;name:string;kind:'local'|'chatgpt';username?:string};
+export async function getForumUser(req:Request):Promise<ForumUser|null>{const c=cookies(req),token=c[SESSION_COOKIE];if(token&&/^[a-f0-9]{64}$/.test(token)){const row=await authDb().prepare('SELECT s.user_id,p.name,a.username FROM sessions s JOIN accounts a ON a.user_id=s.user_id JOIN profiles p ON p.id=s.user_id WHERE s.token_hash=? AND s.expires>?').bind(await sha(token),Date.now()).first<any>();if(row)return{id:row.user_id,name:row.name,username:row.username,kind:'local'}}if(c.bwj_guest==='1')return null;return null}
+export async function createSession(req:Request,userId:string){const token=randomSecret();const hash=await sha(token);const t=Date.now();const old=cookies(req)[SESSION_COOKIE];const ops=[authDb().prepare('INSERT INTO sessions(token_hash,user_id,expires,created) VALUES(?,?,?,?)').bind(hash,userId,t+SESSION_SECONDS*1000,t)];if(old)ops.push(authDb().prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha(old)));await authDb().batch(ops);return [cookie(req,SESSION_COOKIE,token),cookie(req,'bwj_guest','',0)]}
+export async function limit(key:string,max:number,window=900000){const now=Date.now();const row=await authDb().prepare('INSERT INTO auth_limits(key,attempts,started) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN started<? THEN 1 ELSE attempts+1 END,started=CASE WHEN started<? THEN ? ELSE started END RETURNING attempts').bind(key,now,now-window,now-window,now).first<any>();return Number(row?.attempts||0)<=max}
+export function sameOrigin(req:Request){if(req.headers.get('sec-fetch-site')==='cross-site')return false;const origin=req.headers.get('origin');if(!origin)return true;try{return new URL(origin).origin===new URL(req.url).origin}catch{return false}}

@@ -1,16 +1,23 @@
 services:
   - type: web
-    name: paw-library-mobile
+    name: baiwujinji-community
     runtime: node
-    plan: free
-    rootDir: standalone
+    repo: https://github.com/yangkezi-yang/paw-library
+    branch: baiwujinji-render
+    rootDir: forum-render
+    region: singapore
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: 'off'
     buildCommand: npm install --no-audit --no-fund && npm run build
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /healthz
+    disk:
+      name: community-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_VERSION
-        value: 22.16.0
-      - key: UPSTREAM_SITE_URL
-        value: https://mint-paw-studio-1109.workspace-682598.chatgpt.site
-      - key: UPSTREAM_SITE_TOKEN
-        sync: false
+        value: '22'
+      - key: DB_PATH
+        value: /var/data/forum.sqlite
