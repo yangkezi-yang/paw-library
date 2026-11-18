@@ -7,7 +7,7 @@ import {health,close} from './database';
 
 const root=resolve(new URL('./public/',import.meta.url).pathname);
 const port=Number(process.env.PORT||3000);
-const mime:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
+const mime:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8'};
 const server=createServer(async(incoming,outgoing)=>{
  try{
   const authority=process.env.RENDER_EXTERNAL_URL||`http://127.0.0.1:${(server.address() as any).port}`;
