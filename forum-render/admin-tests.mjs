@@ -92,7 +92,7 @@ test('admin permissions, moderation, reports, controls, catalog, settings and pr
   assert.equal((await detail(id)).status,404);
   assert.equal((await request(null,'/api/forum?q='+encodeURIComponent('前后台联动测试'))).data.total,0);
   assert.equal((await request(owner,'/api/forum?view=saved')).data.total,0);
-  assert.equal((await api(manager,{action:'reply',id,body:'删除后不能回复'})).status,404);
+  assert.equal((await api(owner,{action:'reply',id,body:'删除后不能回复'})).status,404);
   assert.equal((await api(owner,{action:'vote',id:reply.data.id,active:true})).status,404);
   assert.equal((await request(member,'/api/notifications?mode=count')).data.unread,0);
   let deletedRows=(await request(owner,'/api/admin?section=posts&status=deleted')).data.items;
