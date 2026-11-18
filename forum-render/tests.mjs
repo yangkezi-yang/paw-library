@@ -66,13 +66,13 @@ test('uploaded avatars update existing posts and replies, persist after restart,
  const call=async(body,cookie=member)=>{const r=await fetch(app.url+'/api/forum',{method:'POST',headers:{'Content-Type':'application/json',Origin:app.url,...(cookie?{Cookie:cookie}:{})},body:JSON.stringify(body)});return{status:r.status,data:await r.json()}};
  const signup=async(name)=>{const password=crypto.randomUUID();const r=await fetch(app.url+'/api/auth',{method:'POST',headers:{'Content-Type':'application/json',Origin:app.url},body:JSON.stringify({action:'register',username:name,password,nickname:name})});assert.equal(r.status,201);return{username:name,password,cookie:r.headers.getSetCookie().map(s=>s.split(';')[0]).join('; '),data:await r.json()}};
  try{
-  const initial=await (await fetch(app.url+'/api/forum?board='+encodeURIComponent('编辑那点事'))).json();assert.equal(initial.total,1);assert.equal(initial.posts[0].board,'编辑那点事');
+  const initial=await (await fetch(app.url+'/api/forum?board='+encodeURIComponent('编剧那点事'))).json();assert.equal(initial.total,1);assert.equal(initial.posts[0].board,'编剧那点事');
   const first=await signup('avatar_'+crypto.randomUUID().slice(0,8));member=first.cookie;
   assert.equal((await call({action:'profile',name:'头像猫友',avatar:img},'')).status,401);
   assert.equal((await call({action:'profile',name:'头像猫友',avatar:'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='})).status,400);
   assert.equal((await call({action:'profile',name:'头像猫友',avatar:'data:image/png;base64,'+Buffer.from('not a valid image at all').toString('base64')})).status,400);
   assert.equal((await call({action:'profile',name:'头像猫友',avatar:'data:image/png;base64,'+'A'.repeat(270000)})).status,400);
-  const post=await call({action:'post',title:'编辑分享',body:'头像测试',board:'编辑那点事'});assert.equal(post.status,200);
+  const post=await call({action:'post',title:'编辑分享',body:'头像测试',board:'编剧那点事'});assert.equal(post.status,200);
   assert.equal((await call({action:'reply',id:post.data.id,body:'头像应同步到回复'})).status,200);
   const saved=await call({action:'profile',name:'头像猫友',avatar:img});assert.equal(saved.status,200);assert.match(saved.data.avatar,/^\/api\/avatar\?id=/);
   const read=async()=>{const r=await fetch(app.url+'/api/forum?mode=detail&id='+post.data.id,{headers:{Cookie:member}});assert.equal(r.status,200);return r.json()};
@@ -92,7 +92,7 @@ test('an existing database keeps its old posts when the board is renamed',{skip:
   const disk=new DatabaseSync(db);disk.exec('CREATE TABLE schema_migrations(name TEXT PRIMARY KEY)');
   for(const name of ['0000_tearful_randall_flagg.sql','0001_wooden_wild_pack.sql']){disk.exec(await readFile('migrations/'+name,'utf8'));disk.prepare('INSERT INTO schema_migrations VALUES(?)').run(name)}
   disk.prepare('INSERT INTO posts(id,author_id,author,board,title,body,created,updated) VALUES(?,?,?,?,?,?,?,?)').run('old-board-post','old-member','老猫友','生活那点事','原来的帖子','保留原文',1,1);disk.close();
-  app=await start(db);const d=await (await fetch(app.url+'/api/forum?board='+encodeURIComponent('编辑那点事'))).json();assert.equal(d.posts.find(p=>p.id==='old-board-post')?.board,'编辑那点事');
+  app=await start(db);const d=await (await fetch(app.url+'/api/forum?board='+encodeURIComponent('编剧那点事'))).json();assert.equal(d.posts.find(p=>p.id==='old-board-post')?.board,'编剧那点事');
   const legacy=await (await fetch(app.url+'/api/forum?board='+encodeURIComponent('生活那点事'))).json();assert.equal(legacy.total,d.total);
  }finally{if(app)await app.stop();await rm(dir,{recursive:true,force:true})}
 });

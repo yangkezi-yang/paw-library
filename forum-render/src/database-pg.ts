@@ -58,7 +58,7 @@ if(process.env.MIGRATION_SNAPSHOT){
     await client.query(`INSERT INTO ${table}(${names}) VALUES(${values}) ON CONFLICT(${pk}) ${setters?'DO UPDATE SET '+setters:'DO NOTHING'}`,keys.map(k=>row[k]));
    }
   }
-  await client.query('UPDATE posts SET board=$1 WHERE board=$2',['编辑那点事','生活那点事']);
+  await client.query('UPDATE posts SET board=$1 WHERE board=$2',['编剧那点事','生活那点事']);
   await client.query('INSERT INTO schema_migrations VALUES($1)',['legacy_import_v1']);
  });
 }
