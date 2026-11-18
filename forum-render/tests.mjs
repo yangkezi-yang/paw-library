@@ -96,3 +96,44 @@ test('an existing database keeps its old posts when the board is renamed',{skip:
   const legacy=await (await fetch(app.url+'/api/forum?board='+encodeURIComponent('生活那点事'))).json();assert.equal(legacy.total,d.total);
  }finally{if(app)await app.stop();await rm(dir,{recursive:true,force:true})}
 });
+test('reply and quote notifications are private, deduplicated, persistent and scoped to live replies',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'forum-notices-'));const db=join(dir,'forum.sqlite');let app=await start(db);
+ const request=async(cookie,path,body,origin=app.url)=>{const r=await fetch(app.url+path,{method:body?'POST':'GET',headers:{...(cookie?{Cookie:cookie}:{}),...(body?{'Content-Type':'application/json',Origin:origin}:{})},...(body?{body:JSON.stringify(body)}:{})});return{status:r.status,data:await r.json()}};
+ const signup=async(prefix)=>{const r=await fetch(app.url+'/api/auth',{method:'POST',headers:{'Content-Type':'application/json',Origin:app.url},body:JSON.stringify({action:'register',username:prefix+'_'+crypto.randomUUID().slice(0,8),password:crypto.randomUUID(),nickname:prefix+'猫友'})});assert.equal(r.status,201);return r.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ')};
+ const unread=async(cookie)=>(await request(cookie,'/api/notifications?mode=count')).data.unread;
+ try{
+  assert.equal((await request('','/api/notifications')).status,401);assert.equal((await request('','/api/notifications',{action:'read_all'})).status,401);
+  const a=await signup('author'),b=await signup('bravo'),c=await signup('charlie'),d=await signup('delta');
+  const post=await request(a,'/api/forum',{action:'post',title:'通知测试帖子',body:'讨论',board:'编剧那点事'});assert.equal(post.status,200);
+  const bReply=await request(b,'/api/forum',{action:'reply',id:post.data.id,body:'第一条评论'});assert.equal(bReply.status,200);assert.equal(await unread(a),1);assert.equal(await unread(b),0);
+  const cReply=await request(c,'/api/forum',{action:'reply',id:post.data.id,body:'引用B的评论',replyToId:bReply.data.id,quote:'伪造引用文字'});assert.equal(cReply.status,200);assert.equal(await unread(a),2);assert.equal(await unread(b),1);assert.equal(await unread(c),0);
+  const detail=(await request(c,'/api/forum?mode=detail&id='+post.data.id)).data;assert.equal(detail.replies.find(r=>r.id===cReply.data.id).quote,'bravo猫友：第一条评论');
+  const ownReply=await request(a,'/api/forum',{action:'reply',id:post.data.id,body:'楼主引用C',replyToId:cReply.data.id});assert.equal(ownReply.status,200);assert.equal(await unread(a),2);assert.equal(await unread(c),1);
+  const other=await request(b,'/api/forum',{action:'post',title:'另一个帖子',body:'其他讨论',board:'社区杂谈'});assert.equal(other.status,200);
+  assert.equal((await request(d,'/api/forum',{action:'reply',id:other.data.id,body:'错误的跨帖引用',replyToId:bReply.data.id})).status,400);
+  assert.equal((await request(d,'/api/forum',{action:'reply',id:post.data.id,body:'不存在的引用',replyToId:'missing-reply'})).status,400);
+  const dReply=await request(d,'/api/forum',{action:'reply',id:post.data.id,body:'同时引用楼主',replyToId:ownReply.data.id});assert.equal(dReply.status,200);assert.equal(await unread(a),3);
+  const aList=await request(a,'/api/notifications');assert.equal(aList.data.total,3);const dedup=aList.data.items.filter(n=>n.target.replyId===dReply.data.id);assert.equal(dedup.length,1);assert.equal(dedup[0].kind,'quote');
+  const quote=(await request(b,'/api/notifications')).data.items[0];assert.equal(quote.kind,'quote');assert.equal(quote.target.replyId,cReply.data.id);assert.equal(quote.target.postId,post.data.id);
+  assert.equal((await request(b,'/api/notifications',{action:'read',id:aList.data.items[0].id})).status,404);assert.equal(await unread(a),3);
+  assert.equal((await request(a,'/api/notifications',{action:'read_all'},'https://untrusted.invalid')).status,403);
+  const read=await request(a,'/api/notifications',{action:'read',id:aList.data.items[0].id});assert.equal(read.status,200);assert.equal(read.data.target.page,1);assert.equal(await unread(a),2);
+  assert.equal((await request(a,'/api/notifications',{action:'read_all'})).status,200);assert.equal(await unread(a),0);assert.equal(await unread(b),1);
+  await app.stop();app=await start(db);assert.equal(await unread(a),0);assert.equal(await unread(b),1);assert.equal(await unread(c),1);
+  const remove=await request(c,'/api/forum',{action:'delete',kind:'reply',id:cReply.data.id});assert.equal(remove.status,200);assert.equal(await unread(b),0);assert.equal((await request(b,'/api/notifications')).data.items.length,0);
+ }finally{await app.stop();await rm(dir,{recursive:true,force:true})}
+});
+test('notifications find a quoted reply on the right page when earlier floors are deleted',{skip:!process.env.TEST_PG},async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'forum-notice-page-'));const db=join(dir,'forum.sqlite');let app;
+ const now=Date.now()-10000;
+ const snapshot={profiles:[{id:'legacy-member',name:'原站猫友',created:now}],accounts:[],posts:[{id:'long-thread',author_id:'legacy-member',author:'原站猫友',board:'编剧那点事',title:'长讨论',body:'正文',created:now,updated:now,views:0,pinned:0,featured:0,demo:0,deleted:0}],replies:Array.from({length:21},(_,i)=>({id:'old-'+i,post_id:'long-thread',author_id:'legacy-member',author:'原站猫友',body:'旧评论'+i,quote:null,created:now+i,deleted:i===0?1:0})),marks:[],votes:[]};
+ const signup=async(prefix)=>{const r=await fetch(app.url+'/api/auth',{method:'POST',headers:{'Content-Type':'application/json',Origin:app.url},body:JSON.stringify({action:'register',username:prefix+'_'+crypto.randomUUID().slice(0,8),password:crypto.randomUUID(),nickname:prefix+'猫友'})});assert.equal(r.status,201);return r.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ')};
+ const call=async(cookie,path,body)=>{const r=await fetch(app.url+path,{method:body?'POST':'GET',headers:{Cookie:cookie,...(body?{'Content-Type':'application/json',Origin:app.url}:{})},...(body?{body:JSON.stringify(body)}:{})});assert.equal(r.status,200);return r.json()};
+ try{
+  app=await start(db,{MIGRATION_SNAPSHOT:JSON.stringify(snapshot)});const a=await signup('first'),b=await signup('second');
+  const first=await call(a,'/api/forum',{action:'reply',id:'long-thread',body:'我的评论'});const quoted=await call(b,'/api/forum',{action:'reply',id:'long-thread',body:'引用长帖评论',replyToId:first.id});
+  const notice=(await call(a,'/api/notifications')).items[0];assert.equal(notice.target.page,2);assert.equal(notice.target.replyId,quoted.id);
+  const detail=await call(a,'/api/forum?mode=detail&id=long-thread&page='+notice.target.page);assert.ok(detail.replies.some(r=>r.id===quoted.id));
+  const clicked=await call(a,'/api/notifications',{action:'read',id:notice.id});assert.equal(clicked.target.page,2);assert.equal(clicked.target.replyId,quoted.id);
+ }finally{if(app)await app.stop();await rm(dir,{recursive:true,force:true})}
+});

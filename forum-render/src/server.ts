@@ -4,6 +4,7 @@ import {resolve,extname} from 'node:path';
 import * as auth from './auth-api';
 import * as forum from './forum-api';
 import * as avatar from './avatar-api';
+import * as notifications from './notifications-api';
 import {health,close} from './database';
 
 const root=resolve(new URL('./public/',import.meta.url).pathname);
@@ -15,7 +16,7 @@ const server=createServer(async(incoming,outgoing)=>{
   const url=new URL(incoming.url||'/',authority);
   if(url.pathname==='/healthz'){await health();outgoing.writeHead(200,{'Content-Type':'text/plain','Cache-Control':'no-store'});outgoing.end('ok');return}
   if(url.pathname==='/api/avatar'){if(!['GET','HEAD'].includes(incoming.method||'')){outgoing.writeHead(405);outgoing.end();return}const result=await avatar.GET(new Request(url));outgoing.statusCode=result.status;result.headers.forEach((v,k)=>outgoing.setHeader(k,v));outgoing.end(incoming.method==='HEAD'?undefined:Buffer.from(await result.arrayBuffer()));return}
-  if(url.pathname==='/api/auth'||url.pathname==='/api/forum'){
+  if(url.pathname==='/api/auth'||url.pathname==='/api/forum'||url.pathname==='/api/notifications'){
    if(!['GET','POST'].includes(incoming.method||'')){outgoing.writeHead(405,{Allow:'GET, POST'});outgoing.end();return}
    const headers=new Headers();for(const [k,v]of Object.entries(incoming.headers))if(v)headers.set(k,Array.isArray(v)?v.join(', '):v);
    // Only trust Render's final forwarded hop in production, never a supplied cf-* header.
@@ -24,7 +25,7 @@ const server=createServer(async(incoming,outgoing)=>{
    headers.set('cf-connecting-ip',process.env.RENDER?(forwarded.at(-1)||incoming.socket.remoteAddress||'unknown'):(incoming.socket.remoteAddress||'unknown'));
    const chunks:Buffer[]=[];let size=0;for await(const chunk of incoming){size+=chunk.length;if(size>300000){outgoing.writeHead(413);outgoing.end();return}chunks.push(chunk)}const body=Buffer.concat(chunks).toString('utf8');
    const request=new Request(url,{method:incoming.method,headers,...(incoming.method==='POST'?{body}:{})});
-   const api=url.pathname==='/api/auth'?auth:forum;
+   const api=url.pathname==='/api/auth'?auth:url.pathname==='/api/notifications'?notifications:forum;
    const response=await (incoming.method==='POST'?api.POST(request):api.GET(request));
    outgoing.statusCode=response.status;response.headers.forEach((v,k)=>{if(k!=='set-cookie')outgoing.setHeader(k,v)});
    const cookies=response.headers.getSetCookie();if(cookies.length)outgoing.setHeader('Set-Cookie',cookies);
