@@ -21,7 +21,7 @@ export async function POST(req:Request){try{
   const nickname=text(x.nickname,20)||name.slice(0,20);if(nickname.length<2||nickname.length>20)return result({error:'昵称请填写2至20个字'},400);
   if(await authDb().prepare('SELECT user_id FROM accounts WHERE username=?').bind(name).first())return result({error:'这个用户名已经有人使用，换一个试试'},409);
   const id='member_'+crypto.randomUUID(),salt=randomSecret(16),recovery=randomSecret(20),hash=await passwordHash(password,salt),now=Date.now();
-  try{await authDb().batch([authDb().prepare('INSERT INTO profiles(id,name,created) VALUES(?,?,?)').bind(id,nickname,now),authDb().prepare('INSERT INTO accounts(user_id,username,password_hash,salt,iterations,recovery_hash,created) VALUES(?,?,?,?,?,?,?)').bind(id,name,hash,salt,PASSWORD_ITERATIONS,await sha(recovery),now)])}catch(e){if(String(e).includes('UNIQUE'))return result({error:'这个用户名已经有人使用，换一个试试'},409);throw e}
+  try{await authDb().batch([authDb().prepare('INSERT INTO profiles(id,name,created) VALUES(?,?,?)').bind(id,nickname,now),authDb().prepare('INSERT INTO accounts(user_id,username,password_hash,salt,iterations,recovery_hash,created) VALUES(?,?,?,?,?,?,?)').bind(id,name,hash,salt,PASSWORD_ITERATIONS,await sha(recovery),now)])}catch(e){if(String(e).includes('UNIQUE')||(e as any)?.code==='23505')return result({error:'这个用户名已经有人使用，换一个试试'},409);throw e}
   const cs=await createSession(req,id);return result({ok:true,user:{id,name:nickname,username:name,kind:'local'},recoveryCode:recovery},201,cs);
  }
  if(!await limit(x.action+'-ip:'+ipHash,40)||!await limit(x.action+'-account:'+await sha(name),8))return result({error:'尝试次数过多，请15分钟后再试'},429);
@@ -37,4 +37,4 @@ export async function POST(req:Request){try{
  const updated=await authDb().prepare('UPDATE accounts SET password_hash=?,salt=?,iterations=?,recovery_hash=? WHERE user_id=? AND recovery_hash=?').bind(hash,salt,PASSWORD_ITERATIONS,await sha(nextCode),row.user_id,recoveryHash).run();if(!updated.meta.changes)return result({error:'找回码已失效，请使用最新找回码'},409);
  await authDb().prepare('DELETE FROM sessions WHERE user_id=?').bind(row.user_id).run();
  const cs=await createSession(req,row.user_id);return result({ok:true,user:{id:row.user_id,name:row.name,username:row.username,kind:'local'},recoveryCode:nextCode},200,cs);
- }catch(e){console.error('Auth request failed');return result({error:'暂时无法完成操作，请稍后再试'},503)}}
+ }catch(e){console.error('Auth request failed'+(process.env.FORUM_TEST_PGLITE_DIR?': '+String(e):''));return result({error:'暂时无法完成操作，请稍后再试'},503)}}

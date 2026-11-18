@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve,extname} from 'node:path';
 import * as auth from './auth-api';
 import * as forum from './forum-api';
-import {sqlite} from './database';
+import {health,close} from './database';
 
 const root=resolve(new URL('./public/',import.meta.url).pathname);
 const port=Number(process.env.PORT||3000);
@@ -12,7 +12,7 @@ const server=createServer(async(incoming,outgoing)=>{
  try{
   const authority=process.env.RENDER_EXTERNAL_URL||`http://127.0.0.1:${(server.address() as any).port}`;
   const url=new URL(incoming.url||'/',authority);
-  if(url.pathname==='/healthz'){sqlite.prepare('SELECT 1').get();outgoing.writeHead(200,{'Content-Type':'text/plain','Cache-Control':'no-store'});outgoing.end('ok');return}
+  if(url.pathname==='/healthz'){await health();outgoing.writeHead(200,{'Content-Type':'text/plain','Cache-Control':'no-store'});outgoing.end('ok');return}
   if(url.pathname==='/api/auth'||url.pathname==='/api/forum'){
    if(!['GET','POST'].includes(incoming.method||'')){outgoing.writeHead(405,{Allow:'GET, POST'});outgoing.end();return}
    const headers=new Headers();for(const [k,v]of Object.entries(incoming.headers))if(v)headers.set(k,Array.isArray(v)?v.join(', '):v);
@@ -37,4 +37,4 @@ const server=createServer(async(incoming,outgoing)=>{
  }catch{outgoing.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});outgoing.end(JSON.stringify({error:'暂时无法完成请求'}))}
 });
 server.listen(port,'0.0.0.0',()=>console.log(`Community listening on ${(server.address() as any).port}`));
-process.on('SIGTERM',()=>server.close(()=>{sqlite.close();process.exit(0)}));
+process.on('SIGTERM',()=>server.close(async()=>{await close();process.exit(0)}));
