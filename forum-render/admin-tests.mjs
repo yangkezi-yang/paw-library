@@ -1,0 +1,80 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+
+test('admin permissions, moderation, reports, controls, catalog, settings and private backup affect the same forum data',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'bwj-admin-')),code=crypto.randomUUID()+crypto.randomUUID(),hash=createHash('sha256').update(code).digest('hex');let child,base;
+ async function start(){child=spawn(process.execPath,['dist/server.mjs'],{env:{...process.env,RENDER:'',PORT:'0',DB_PATH:join(directory,'forum.sqlite'),ADMIN_SETUP_HASH:hash,...(process.env.TEST_PG?{FORUM_TEST_PGLITE_DIR:join(directory,'postgres')}:{})},stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',b=>{stderr+=b;if(process.env.DEBUG_TEST)process.stderr.write(b)});base=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill();reject(Error('Startup timeout: '+stderr))},15000);child.once('exit',()=>{clearTimeout(timer);reject(Error(stderr))});child.stdout.on('data',b=>{const match=b.toString().match(/listening on (\d+)/);if(match){clearTimeout(timer);resolve('http://127.0.0.1:'+match[1])}})})}
+ async function stop(){if(child&&child.exitCode===null){const done=once(child,'exit');child.kill('SIGTERM');await done}}
+ async function request(who,path,body,origin=base){const r=await fetch(base+path,{method:body?'POST':'GET',headers:{...(who?.cookie?{Cookie:who.cookie}:{}),...(body?{'Content-Type':'application/json',Origin:origin}:{})},...(body?{body:JSON.stringify(body)}:{})});const cookies=r.headers.getSetCookie();if(who&&cookies.length)who.cookie=cookies.map(c=>c.split(';')[0]).join('; ');return{status:r.status,data:await r.json()}}
+ async function signup(prefix){const user={username:prefix+'_'+crypto.randomUUID().slice(0,8),password:crypto.randomUUID(),cookie:''};const r=await request(user,'/api/auth',{action:'register',username:user.username,password:user.password,nickname:prefix+'猫友'});assert.equal(r.status,201,JSON.stringify(r.data));return{...user,id:r.data.user.id,recoveryCode:r.data.recoveryCode}}
+ const admin=(who,body)=>request(who,'/api/admin',body);
+ const api=(who,body)=>request(who,'/api/forum',body);
+ const detail=(id)=>request(null,'/api/forum?mode=detail&id='+id);
+ try{
+  await start();assert.equal((await fetch(base+'/admin')).status,200);
+  assert.equal((await request(null,'/api/admin?section=users')).status,401);
+  const owner=await signup('owner'),member=await signup('member'),manager=await signup('manager'),moderator=await signup('moderator');
+  assert.equal((await request(member,'/api/admin?section=posts')).status,403);
+  assert.equal((await admin(owner,{action:'bootstrap',code:'wrong-code'})).status,403);
+  assert.equal((await admin(owner,{action:'bootstrap',code})).status,200);
+  let session=await request(owner,'/api/admin?section=session');assert.equal(session.data.role,'owner');assert.equal(session.data.setupAvailable,false);
+  assert.equal((await admin(member,{action:'bootstrap',code})).status,409);
+  assert.equal((await admin(owner,{action:'user_role',id:manager.id,role:'admin'})).status,200);
+  assert.equal((await admin(owner,{action:'user_role',id:moderator.id,role:'moderator'})).status,200);
+  assert.equal((await request(moderator,'/api/admin?section=users')).status,403);assert.equal((await request(moderator,'/api/admin?section=posts')).status,200);
+  assert.equal((await admin(manager,{action:'user_role',id:member.id,role:'admin'})).status,403);
+  assert.equal((await admin(moderator,{action:'settings_save',settings:{posting_open:false}})).status,403);
+  const post=await api(member,{action:'post',board:'编剧那点事',title:'前后台联动测试',body:'这段原文必须保留'});assert.equal(post.status,200);const id=post.data.id;
+  for(const field of ['pinned','featured','locked'])assert.equal((await admin(owner,{action:'post_flag',id,field,value:1})).status,200);
+  let row=(await detail(id)).data.post;assert.equal(row.pinned,1);assert.equal(row.featured,1);assert.equal(row.locked,1);
+  assert.equal((await api(manager,{action:'reply',id,body:'不能回复锁帖'})).status,403);
+  assert.equal((await admin(moderator,{action:'post_flag',id,field:'locked',value:0})).status,200);
+  const reply=await api(manager,{action:'reply',id,body:'这条回复用于举报测试'});assert.equal(reply.status,200);
+  assert.equal((await admin(moderator,{action:'reply_flag',id:reply.data.id,field:'moderated',value:1})).status,200);assert.equal((await detail(id)).data.totalAll,0);
+  assert.equal((await request(member,'/api/notifications?mode=count')).data.unread,0);
+  assert.equal((await admin(moderator,{action:'reply_flag',id:reply.data.id,field:'moderated',value:0})).status,200);assert.equal((await detail(id)).data.totalAll,1);
+  assert.equal((await admin(manager,{action:'post_flag',id,field:'moderated',value:1})).status,200);assert.equal((await detail(id)).status,404);assert.equal((await request(null,'/api/forum?q='+encodeURIComponent('前后台联动测试'))).data.total,0);
+  assert.equal((await admin(manager,{action:'post_flag',id,field:'moderated',value:0})).status,200);assert.equal((await detail(id)).data.post.body,'这段原文必须保留');
+  assert.equal((await request(owner,'/api/admin',{action:'post_flag',id,field:'moderated',value:1},'https://evil.invalid')).status,403);
+  assert.equal((await api(member,{action:'report',kind:'post',id,reason:'不能举报自己'})).status,400);
+  assert.equal((await api(member,{action:'report',kind:'reply',id:reply.data.id,reason:'请核查这条回复'})).status,200);
+  assert.equal((await api(member,{action:'report',kind:'reply',id:reply.data.id,reason:'重复提交举报'})).status,200);
+  let reports=await request(moderator,'/api/admin?section=reports&status=open');assert.equal(reports.status,200);assert.equal(reports.data.total,1);assert.equal(reports.data.items[0].reporter,'member猫友');
+  assert.equal((await admin(moderator,{action:'report_handle',id:reports.data.items[0].id,status:'resolved',resolution:'已核查并隐藏',hide:true})).status,200);assert.equal((await detail(id)).data.totalAll,0);
+  assert.equal((await request(member,'/api/admin?section=reports')).status,403);
+  assert.equal((await admin(owner,{action:'reply_flag',id:reply.data.id,field:'moderated',value:0})).status,200);
+  assert.equal((await admin(owner,{action:'settings_save',settings:{announcement_title:'新的社区公告',announcement_body:'后台公告已经联动前台',community_rules:'新的社区公约，请尊重原创。',registration_open:false,posting_open:false}})).status,200);
+  let publicConfig=(await request(null,'/api/community')).data;assert.equal(publicConfig.settings.announcement_title,'新的社区公告');assert.equal(publicConfig.settings.community_rules,'新的社区公约，请尊重原创。');assert.equal(publicConfig.settings.registration_open,false);assert.ok(!JSON.stringify(publicConfig).includes(hash));
+  assert.equal((await request(null,'/api/auth',{action:'register',username:'closed_account',password:crypto.randomUUID()})).status,403);
+  assert.equal((await api(member,{action:'reply',id,body:'社区暂停回复'})).status,403);
+  assert.equal((await admin(owner,{action:'settings_save',settings:{registration_open:true,posting_open:true,max_post_length:100,max_reply_length:100}})).status,200);
+  assert.equal((await api(owner,{action:'post',board:'社区杂谈',title:'长度限制测试',body:'字'.repeat(101)})).status,400);
+  assert.equal((await admin(owner,{action:'user_control',id:member.id,status:'muted',reason:'测试禁言联动',hours:24})).status,200);
+  assert.equal((await request(member,'/api/auth')).data.user.status,'muted');assert.equal((await api(member,{action:'reply',id,body:'禁言不能回复'})).status,403);
+  assert.equal((await admin(manager,{action:'user_control',id:owner.id,status:'banned',reason:'不应允许',hours:24})).status,403);
+  assert.equal((await admin(owner,{action:'user_control',id:owner.id,status:'muted',reason:'不应限制自己',hours:24})).status,400);
+  assert.equal((await admin(owner,{action:'user_role',id:owner.id,role:'member'})).status,400);
+  assert.equal((await admin(owner,{action:'user_control',id:member.id,status:'banned',reason:'测试封禁联动',hours:24})).status,200);assert.equal((await request(member,'/api/auth')).data.user,null);
+  assert.equal((await request(member,'/api/auth',{action:'login',username:member.username,password:member.password})).status,403);
+  assert.equal((await request(member,'/api/auth',{action:'recover',username:member.username,password:'new-password-test',recoveryCode:member.recoveryCode})).status,403);
+  assert.equal((await admin(owner,{action:'user_control',id:member.id,status:'active',reason:'已解除'})).status,200);assert.equal((await request(member,'/api/auth',{action:'login',username:member.username,password:member.password})).status,200);
+  const board=(await request(owner,'/api/admin?section=boards')).data.items.find(b=>b.name==='编剧那点事');assert.ok(board);
+  const saveBoard=(visible,posting)=>admin(owner,{action:'board_save',id:board.id,name:'编剧交流实验',group:'创作交流',sort:3,visible,posting});
+  assert.equal((await saveBoard(true,true)).status,200);assert.equal((await detail(id)).data.post.board,'编剧交流实验');assert.equal((await request(null,'/api/forum?board='+encodeURIComponent('编剧那点事'))).status,200);
+  assert.equal((await saveBoard(true,false)).status,200);assert.equal((await api(owner,{action:'post',board:'编剧交流实验',title:'关闭板块测试',body:'不能发表'})).status,403);assert.equal((await detail(id)).status,200);
+  assert.equal((await saveBoard(false,false)).status,200);assert.equal((await detail(id)).status,404);assert.equal((await request(member,'/api/notifications?mode=count')).data.unread,0);publicConfig=(await request(null,'/api/community')).data;assert.ok(!publicConfig.boards.some(b=>b.id===board.id));
+  assert.equal((await saveBoard(true,true)).status,200);assert.equal((await detail(id)).status,200);
+  assert.equal((await admin(owner,{action:'board_save',name:'剧本交流区',group:'创作角落',sort:-10,visible:true,posting:true})).status,200);const newPost=await api(owner,{action:'post',board:'剧本交流区',title:'新板块可发帖',body:'动态板块发布测试'});assert.equal(newPost.status,200);
+  publicConfig=(await request(null,'/api/community')).data;assert.equal(publicConfig.groups[0].name,'创作角落');assert.ok(publicConfig.groups[0].boards.includes('剧本交流区'));
+  assert.equal((await request(manager,'/api/admin?section=backup')).status,403);assert.equal((await request(moderator,'/api/admin?section=backup')).status,403);assert.equal((await request(member,'/api/admin?section=backup')).status,403);
+  const backup=await request(owner,'/api/admin?section=backup');assert.equal(backup.status,200,JSON.stringify(backup.data));assert.equal(backup.data.format,'baiwujinji-backup');assert.ok(backup.data.data.posts.some(p=>p.id===id));assert.ok(backup.data.data.accounts.some(a=>a.user_id===member.id));assert.equal(backup.data.data.sessions,undefined);assert.ok(!JSON.stringify(backup.data).includes(code));
+  const logs=await request(owner,'/api/admin?section=logs');assert.equal(logs.status,200);assert.ok(logs.data.total>15);assert.ok(!JSON.stringify(logs.data).includes(code));assert.equal((await request(owner,'/api/admin?section=overview')).status,200);
+  await stop();await start();session=await request(owner,'/api/admin?section=session');assert.equal(session.data.role,'owner');publicConfig=(await request(null,'/api/community')).data;assert.ok(publicConfig.boards.some(b=>b.name==='编剧交流实验'));assert.equal((await detail(id)).data.post.body,'这段原文必须保留');
+ }finally{await stop();await rm(directory,{recursive:true,force:true})}
+});

@@ -2,9 +2,9 @@ import {env} from './database';
 import {getForumUser,sameOrigin} from './forum-auth';
 import {avatarURL} from './avatar-utils';
 const json=(data:any,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
-const visible='FROM notifications n JOIN posts p ON p.id=n.post_id JOIN replies r ON r.id=n.reply_id WHERE n.recipient_id=? AND p.deleted=0 AND r.deleted=0';
+const visible='FROM notifications n JOIN posts p ON p.id=n.post_id JOIN replies r ON r.id=n.reply_id WHERE n.recipient_id=? AND p.deleted=0 AND p.moderated=0 AND r.deleted=0 AND r.moderated=0 AND EXISTS(SELECT 1 FROM forum_boards b WHERE b.name=p.board AND b.visible=1)';
 function target(row:any){return {postId:row.post_id,replyId:row.reply_id,page:Math.max(1,Math.ceil(Number(row.position)/20))}}
-const position='(SELECT count(*) FROM replies x WHERE x.post_id=n.post_id AND x.deleted=0 AND (x.created<r.created OR (x.created=r.created AND x.id<=r.id))) AS position';
+const position='(SELECT count(*) FROM replies x WHERE x.post_id=n.post_id AND x.deleted=0 AND x.moderated=0 AND (x.created<r.created OR (x.created=r.created AND x.id<=r.id))) AS position';
 export async function GET(req:Request){try{
  const user=await getForumUser(req);if(!user)return json({error:'请先登录'},401);
  const url=new URL(req.url),db=env.DB;

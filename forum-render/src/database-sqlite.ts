@@ -27,7 +27,9 @@ class Statement{
   execute(){const r=sqlite.prepare(this.sql).run(...this.values);return {meta:{changes:Number(r.changes)}}}
   run(){return Promise.resolve(this.execute())}
 }
-export const env={DB:{prepare:(sql:string)=>new Statement(sql),batch:(ops:Statement[])=>{
+export const env:{DB:any}={DB:{prepare:(sql:string)=>new Statement(sql),snapshot:async(tables:string[])=>{
+ sqlite.exec('BEGIN');try{const data:any={};let bytes=0;for(const table of tables){if(!/^[a-z_]+$/.test(table))throw Error('Invalid table');data[table]=[];for(let offset=0;offset<=50000;offset+=200){const rows=sqlite.prepare(`SELECT * FROM ${table} LIMIT 200 OFFSET ?`).all(offset);for(const row of rows){bytes+=Buffer.byteLength(JSON.stringify(row));if(bytes>25*1024*1024||data[table].length>=50000)throw Error('Backup exceeds export limit');data[table].push(row)}if(rows.length<200)break}}sqlite.exec('COMMIT');return data}catch(e){sqlite.exec('ROLLBACK');throw e}
+ },batch:(ops:Statement[])=>{
   sqlite.exec('BEGIN IMMEDIATE');
   try{const result=ops.map(s=>s.execute());sqlite.exec('COMMIT');return Promise.resolve(result)}
   catch(e){sqlite.exec('ROLLBACK');throw e}

@@ -36,9 +36,15 @@ class Statement{
  async execute(client=pool){const r=await client.query(translate(this.sql),this.values);return{meta:{changes:Number(r.rowCount??r.affectedRows??0)}}}
  run(){return this.execute()}
 }
-export const env={DB:{prepare:(sql:string)=>new Statement(sql),batch:(ops:Statement[])=>transaction(async c=>{const rows=[];for(const s of ops)rows.push(await s.execute(c));return rows})}};
+export const env:{DB:any}={DB:{prepare:(sql:string)=>new Statement(sql),batch:(ops:Statement[])=>transaction(async c=>{const rows=[];for(const s of ops)rows.push(await s.execute(c));return rows})}};
 export const health=()=>pool.query('SELECT 1');
 export const close=()=>pool.end();
+env.DB.snapshot=async(tables:string[])=>transaction(async client=>{
+ await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+ const data:any={};let bytes=0;
+ for(const table of tables){if(!/^[a-z_]+$/.test(table))throw Error('Invalid table');data[table]=[];for(let offset=0;offset<=50000;offset+=200){const rows=(await client.query(`SELECT * FROM ${table} LIMIT 200 OFFSET $1`,[offset])).rows;for(const row of rows){bytes+=Buffer.byteLength(JSON.stringify(row));if(bytes>25*1024*1024||data[table].length>=50000)throw Error('Backup exceeds export limit');data[table].push(row)}if(rows.length<200)break}}
+ return data;
+});
 
 // Snapshot is private runtime configuration, never bundled or committed.
 // Import once atomically; repeated deploys cannot replace subsequent user edits.

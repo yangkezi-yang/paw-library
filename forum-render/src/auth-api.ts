@@ -1,4 +1,5 @@
 import {avatarURL} from './avatar-utils';
+import {settings,controlFor} from './community-store';
 import {authDb,cookies,cookie,getForumUser,passwordHash,randomSecret,sha,same,createSession,limit,sameOrigin,SESSION_COOKIE,PASSWORD_ITERATIONS} from './forum-auth';
 
 export const dynamic='force-dynamic';
@@ -18,6 +19,7 @@ export async function POST(req:Request){try{
  const password=x.password;if(!validPassword(password))return result({error:'密码请填写8至128位，建议混合字母和数字'},400);
  const ip=req.headers.get('cf-connecting-ip')||'unavailable';const ipHash=await sha(ip);
  if(x.action==='register'){
+  if(!(await settings()).registration_open)return result({error:'社区暂时关闭注册，请稍后再来'},403);
   if(!await limit('register-ip:'+ipHash,10,3600000))return result({error:'注册次数过多，请稍后再试'},429);
   const nickname=text(x.nickname,20)||name.slice(0,20);if(nickname.length<2||nickname.length>20)return result({error:'昵称请填写2至20个字'},400);
   if(await authDb().prepare('SELECT user_id FROM accounts WHERE username=?').bind(name).first())return result({error:'这个用户名已经有人使用，换一个试试'},409);
@@ -30,10 +32,12 @@ export async function POST(req:Request){try{
  if(x.action==='login'){
   const hash=await passwordHash(password,row?.salt||'unregistered-account-salt',row?.iterations||PASSWORD_ITERATIONS);
   if(!row||!same(hash,row.password_hash))return result({error:'用户名或密码不正确'},401);
+  if((await controlFor(row.user_id)).status==='banned')return result({error:'该账号已被封禁，请联系社区管理员'},403);
   const cs=await createSession(req,row.user_id);return result({ok:true,user:{id:row.user_id,name:row.name,username:row.username,avatar:avatarURL(row.user_id,row.avatar_version),kind:'local'}},200,cs);
  }
  const recovery=text(x.recoveryCode,100).replace(/[\s-]/g,'').toLowerCase();const recoveryHash=await sha(recovery);
  if(!row||!same(recoveryHash,row.recovery_hash))return result({error:'用户名或找回码不正确'},401);
+ if((await controlFor(row.user_id)).status==='banned')return result({error:'该账号已被封禁，请联系社区管理员'},403);
  const salt=randomSecret(16),hash=await passwordHash(password,salt),nextCode=randomSecret(20);
  const updated=await authDb().prepare('UPDATE accounts SET password_hash=?,salt=?,iterations=?,recovery_hash=? WHERE user_id=? AND recovery_hash=?').bind(hash,salt,PASSWORD_ITERATIONS,await sha(nextCode),row.user_id,recoveryHash).run();if(!updated.meta.changes)return result({error:'找回码已失效，请使用最新找回码'},409);
  await authDb().prepare('DELETE FROM sessions WHERE user_id=?').bind(row.user_id).run();
