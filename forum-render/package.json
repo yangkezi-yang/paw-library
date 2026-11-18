@@ -12,13 +12,14 @@
     "test": "node --test tests.mjs"
   },
   "dependencies": {
+    "lucide-react": "1.31.0",
+    "pg": "^8.16.3",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "lucide-react": "1.31.0",
-    "pg": "^8.16.3"
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "esbuild": "0.28.0",
-    "@electric-sql/pglite": "^0.3.14"
+    "@electric-sql/pglite": "^0.3.14",
+    "esbuild": "0.28.0"
   }
 }
