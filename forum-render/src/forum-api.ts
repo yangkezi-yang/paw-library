@@ -1,6 +1,6 @@
 import {env} from './database';
 import { getForumUser, sameOrigin, limit } from './forum-auth';
-import { demos } from './forum-data';
+import {demos,signedAuthorBoardId,signedAuthorBoardDenied} from './forum-data';
 import {parseAvatar} from './avatar-api';
 import {avatarURL} from './avatar-utils';
 import {publicCommunity,settings,getBoard} from './community-store';
@@ -20,8 +20,11 @@ export async function GET(req:Request){try{await seed();const u=new URL(req.url)
  const page=Math.max(1,Number(u.searchParams.get('page'))||1),only=u.searchParams.get('author')==='1';const clause=only?' AND r.author_id=?':'';const b=only?[id,post.author_id]:[id];
  const count=await db().prepare('SELECT count(*) AS n FROM replies r WHERE r.post_id=? AND r.deleted=0 AND r.moderated=0'+clause).bind(...b).first<any>();const totalAll=await db().prepare('SELECT count(*) AS n FROM replies WHERE post_id=? AND deleted=0 AND moderated=0').bind(id).first<any>();
  const rows=await db().prepare('SELECT r.*,'+signedAuthorColumn('r')+',CASE WHEN r.reply_to_id IS NULL OR EXISTS(SELECT 1 FROM replies original WHERE original.id=r.reply_to_id AND original.deleted=0 AND original.moderated=0) THEN r.quote ELSE \'引用的评论已不可见\' END AS visible_quote,(SELECT version FROM profile_avatars av WHERE av.user_id=r.author_id) AS avatar_version,(SELECT count(*) FROM replies x WHERE x.post_id=r.post_id AND (x.created<r.created OR (x.created=r.created AND x.id<=r.id))) AS floor,(SELECT count(*) FROM votes v WHERE v.target_id=r.id) AS likes,(SELECT count(*) FROM votes v WHERE v.target_id=r.id AND v.user_id=?) AS liked FROM replies r WHERE r.post_id=? AND r.deleted=0 AND r.moderated=0'+clause+' ORDER BY created,id LIMIT 20 OFFSET ?').bind(uid,...b,(page-1)*20).all();return json({post:withPostAccess(post,user),replies:rows.results.map(withAvatar),total:count.n,totalAll:totalAll.n,user,community});}
- let where='p.deleted=0 AND p.moderated=0 AND EXISTS (SELECT 1 FROM forum_boards b WHERE b.name=p.board AND b.visible=1)';const vals:any[]=[];const requestedBoard=u.searchParams.get('board'),chosenBoard=requestedBoard?await getBoard(requestedBoard):null,board=chosenBoard?.name,q=clean(u.searchParams.get('q'),100),view=u.searchParams.get('view');if(requestedBoard&&(!chosenBoard||!chosenBoard.visible))return json({error:'该板块不存在或已暂停显示'},404);if(board){
-  where+=chosenBoard.id==='signed-author-board'
+ let where='p.deleted=0 AND p.moderated=0 AND EXISTS (SELECT 1 FROM forum_boards b WHERE b.name=p.board AND b.visible=1)';const vals:any[]=[];const requestedBoard=u.searchParams.get('board'),chosenBoard=requestedBoard?await getBoard(requestedBoard):null,board=chosenBoard?.name,q=clean(u.searchParams.get('q'),100),view=u.searchParams.get('view');if(requestedBoard&&(!chosenBoard||!chosenBoard.visible))return json({error:'该板块不存在或已暂停显示'},404);
+ const isAuthorBoard=chosenBoard?.id===signedAuthorBoardId;
+ if(isAuthorBoard&&!user?.signedAuthor)return json({error:signedAuthorBoardDenied,code:'SIGNED_AUTHOR_REQUIRED'},403);
+ if(board){
+  where+=isAuthorBoard
    ? ' AND (p.board=? OR EXISTS (SELECT 1 FROM profiles writer WHERE writer.id=p.author_id AND writer.signed_author=1))'
    : ' AND p.board=?';
   vals.push(board);

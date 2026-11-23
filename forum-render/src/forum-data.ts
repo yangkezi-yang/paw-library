@@ -1,3 +1,6 @@
+export const signedAuthorBoardId='signed-author-board';
+export const signedAuthorBoardName='签约作者专区';
+export const signedAuthorBoardDenied='你不是签约作者，无法进入专区';
 export const groups=[{name:'热门广场',boards:['社区杂谈','编剧那点事','娱乐八卦','情感天地','灌水专区','猫咪小窝']},{name:'文艺与远方',boards:['舞文弄墨','煮酒论史','书影音','旅行日记','摄影交流','美食美酒']},{name:'一起成长',boards:['职场天地','科技数码','学习交流','创业茶馆','理财笔记','房产家居']},{name:'生活万花筒',boards:['时尚前沿','亲子时光','运动健康','游戏世界']}];
 export const boards=groups.flatMap(g=>g.boards);
 export const demos=[
