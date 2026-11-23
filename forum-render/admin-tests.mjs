@@ -138,6 +138,16 @@ test('admin permissions, moderation, reports, controls, catalog, settings and pr
   const sign=(actor,target,signedAuthor)=>admin(actor,{action:'user_signed_author',id:target.id,signedAuthor});
   assert.equal((await sign(reader,reader,true)).status,403);
   assert.equal((await sign(moderator,writer,true)).status,403);
+  assert.equal((await sign(manager,member,true)).status,200);
+  const collectedWork=(await request(null,authorBoardPath)).data.posts.find(p=>p.id===id);
+  assert.equal(collectedWork.board,'编剧交流实验');
+  assert.equal(collectedWork.signed_author,1);
+  assert.equal((await saveBoard(false,false)).status,200);
+  assert.ok(!(await request(null,authorBoardPath)).data.posts.some(p=>p.id===id));
+  assert.equal((await saveBoard(true,true)).status,200);
+  assert.equal((await sign(manager,member,false)).status,200);
+  assert.ok(!(await request(null,authorBoardPath)).data.posts.some(p=>p.id===id));
+  assert.equal((await detail(id)).status,200);
   assert.equal((await sign(manager,writer,true)).status,200);
   const writerSession=(await request(writer,'/api/auth')).data.user;
   assert.equal(writerSession.signedAuthor,true);

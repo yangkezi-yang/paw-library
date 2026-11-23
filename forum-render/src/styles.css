@@ -49,3 +49,19 @@
   font-weight: 600;
   white-space: nowrap;
 }
+
+.author-board-notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid #ebd7ad;
+  border-radius: 12px;
+  background: #fff6e3;
+  color: #754812;
+  font-size: 0.875rem;
+}
+.author-board-notice svg {
+  flex-shrink: 0;
+}
