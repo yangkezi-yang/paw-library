@@ -17,3 +17,35 @@
 .community-long-text{white-space:pre-wrap;line-height:2}.community-state-banner{background:#f8efdc;color:#a4946a;padding:10px 18px;font-size:12px;text-align:center}.pin-label>svg{display:inline;vertical-align:-2px;margin-right:3px}
 
 .own-post-delete{display:inline-flex;align-items:center;gap:4px;border:0;border-radius:6px;padding:3px 7px;background:#fff0f0;color:#b95b65;font:inherit;font-size:12px;cursor:pointer}.own-post-delete:hover{background:#ffe1e4}.thread-toolbar .own-post-delete{color:#b14c5c}.post-meta{flex-wrap:wrap}
+
+.signed-author-avatar {
+  position: relative;
+  box-shadow: 0 0 0 2px #d9a447;
+}
+.signed-author-mark {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #fff6de;
+  border-radius: 50%;
+  background: #855416;
+  color: #fff;
+}
+.avatar .signed-author-mark svg {
+  width: 10px;
+  height: 10px;
+}
+.signed-author-label {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #fff1d2;
+  color: #754812;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}

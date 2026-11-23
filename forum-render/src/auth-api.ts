@@ -25,17 +25,17 @@ export async function POST(req:Request){try{
   if(await authDb().prepare('SELECT user_id FROM accounts WHERE username=?').bind(name).first())return result({error:'这个用户名已经有人使用，换一个试试'},409);
   const id='member_'+crypto.randomUUID(),salt=randomSecret(16),recovery=randomSecret(20),hash=await passwordHash(password,salt),now=Date.now();
   try{await authDb().batch([authDb().prepare('INSERT INTO profiles(id,name,created) VALUES(?,?,?)').bind(id,nickname,now),authDb().prepare('INSERT INTO accounts(user_id,username,password_hash,salt,iterations,recovery_hash,created) VALUES(?,?,?,?,?,?,?)').bind(id,name,hash,salt,PASSWORD_ITERATIONS,await sha(recovery),now)])}catch(e){if(String(e).includes('UNIQUE')||(e as any)?.code==='23505')return result({error:'这个用户名已经有人使用，换一个试试'},409);throw e}
-  const cs=await createSession(req,id);return result({ok:true,user:{id,name:nickname,username:name,kind:'local'},recoveryCode:recovery},201,cs);
+  const cs=await createSession(req,id);return result({ok:true,user:{id,name:nickname,username:name,kind:'local',signedAuthor:false},recoveryCode:recovery},201,cs);
  }
  const rateAction=x.action==='admin_login'?'login':x.action;
  if(!await limit(rateAction+'-ip:'+ipHash,40)||!await limit(rateAction+'-account:'+await sha(name),8))return result({error:'尝试次数过多，请15分钟后再试'},429);
- const row=await authDb().prepare('SELECT a.*,p.name,(SELECT version FROM profile_avatars av WHERE av.user_id=p.id) AS avatar_version FROM accounts a JOIN profiles p ON p.id=a.user_id WHERE a.username=?').bind(name).first<any>();
+ const row=await authDb().prepare('SELECT a.*,p.name,p.signed_author,(SELECT version FROM profile_avatars av WHERE av.user_id=p.id) AS avatar_version FROM accounts a JOIN profiles p ON p.id=a.user_id WHERE a.username=?').bind(name).first<any>();
  if(x.action==='login'||x.action==='admin_login'){
   const hash=await passwordHash(password,row?.salt||'unregistered-account-salt',row?.iterations||PASSWORD_ITERATIONS);
   if(!row||!same(hash,row.password_hash))return result({error:'用户名或密码不正确'},401);
   if(x.action==='admin_login'&&!await roleFor(row.user_id))return result({error:'管理员账号或密码不正确'},401);
   if((await controlFor(row.user_id)).status==='banned')return result({error:'该账号已被封禁，请联系社区管理员'},403);
-  const cs=await createSession(req,row.user_id);return result({ok:true,user:{id:row.user_id,name:row.name,username:row.username,avatar:avatarURL(row.user_id,row.avatar_version),kind:'local'}},200,cs);
+  const cs=await createSession(req,row.user_id);return result({ok:true,user:{id:row.user_id,name:row.name,username:row.username,avatar:avatarURL(row.user_id,row.avatar_version),kind:'local',signedAuthor:row.signed_author===1}},200,cs);
  }
  const recovery=text(x.recoveryCode,100).replace(/[\s-]/g,'').toLowerCase();const recoveryHash=await sha(recovery);
  if(!row||!same(recoveryHash,row.recovery_hash))return result({error:'用户名或找回码不正确'},401);
@@ -43,5 +43,5 @@ export async function POST(req:Request){try{
  const salt=randomSecret(16),hash=await passwordHash(password,salt),nextCode=randomSecret(20);
  const updated=await authDb().prepare('UPDATE accounts SET password_hash=?,salt=?,iterations=?,recovery_hash=? WHERE user_id=? AND recovery_hash=?').bind(hash,salt,PASSWORD_ITERATIONS,await sha(nextCode),row.user_id,recoveryHash).run();if(!updated.meta.changes)return result({error:'找回码已失效，请使用最新找回码'},409);
  await authDb().prepare('DELETE FROM sessions WHERE user_id=?').bind(row.user_id).run();
- const cs=await createSession(req,row.user_id);return result({ok:true,user:{id:row.user_id,name:row.name,username:row.username,avatar:avatarURL(row.user_id,row.avatar_version),kind:'local'},recoveryCode:nextCode},200,cs);
+ const cs=await createSession(req,row.user_id);return result({ok:true,user:{id:row.user_id,name:row.name,username:row.username,avatar:avatarURL(row.user_id,row.avatar_version),kind:'local',signedAuthor:row.signed_author===1},recoveryCode:nextCode},200,cs);
  }catch(e){console.error('Auth request failed'+(process.env.FORUM_TEST_PGLITE_DIR?': '+String(e):''));return result({error:'暂时无法完成操作，请稍后再试'},503)}}

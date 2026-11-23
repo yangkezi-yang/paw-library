@@ -126,5 +126,42 @@ test('admin permissions, moderation, reports, controls, catalog, settings and pr
   assert.equal((await admin(owner,{action:'post_restore',id:newPost.data.id})).status,409);
   const deleteLogs=(await request(owner,'/api/admin?section=logs')).data.items;
   assert.ok(deleteLogs.some(e=>e.action==='posts_delete_all'));
+
+  // Signed authors use the same accounts and public posts as the rest of the forum.
+  const authorBoard='签约作者专区';
+  const authorBoardPath='/api/forum?board='+encodeURIComponent(authorBoard);
+  const writer=await signup('writer'),reader=await signup('reader');
+  const authorPost={action:'post',board:authorBoard,title:'签约作者作品',body:'面向所有访客公开的正文'};
+  assert.equal((await request(null,authorBoardPath)).data.community.boards.find(b=>b.name===authorBoard).signed_author_only,1);
+  assert.equal((await api(null,authorPost)).status,401);
+  assert.equal((await api(writer,{...authorPost,signedAuthor:true})).status,403);
+  const sign=(actor,target,signedAuthor)=>admin(actor,{action:'user_signed_author',id:target.id,signedAuthor});
+  assert.equal((await sign(reader,reader,true)).status,403);
+  assert.equal((await sign(moderator,writer,true)).status,403);
+  assert.equal((await sign(manager,writer,true)).status,200);
+  const writerSession=(await request(writer,'/api/auth')).data.user;
+  assert.equal(writerSession.signedAuthor,true);
+  assert.equal(writerSession.role,null);
+  assert.equal((await request(writer,'/api/admin?section=overview')).status,403);
+  const published=await api(writer,authorPost);
+  assert.equal(published.status,200,JSON.stringify(published.data));
+  assert.equal((await request(null,authorBoardPath)).data.posts.find(p=>p.id===published.data.id).signed_author,1);
+  const authorReply={action:'reply',id:published.data.id,body:'作品连载更新'};
+  assert.equal((await api(reader,authorReply)).status,403);
+  assert.equal((await sign(owner,reader,true)).status,200);
+  assert.equal((await api(reader,authorReply)).status,200);
+  const publicWork=(await detail(published.data.id)).data;
+  assert.equal(publicWork.post.body,authorPost.body);
+  assert.equal(publicWork.post.signed_author,1);
+  assert.equal(publicWork.replies[0].signed_author,1);
+  assert.equal((await request(writer,'/api/notifications?mode=count')).data.unread,1);
+  assert.equal((await sign(owner,writer,false)).status,200);
+  assert.equal((await request(writer,'/api/auth')).data.user.signedAuthor,false);
+  assert.equal((await detail(published.data.id)).data.post.signed_author,0);
+  assert.equal((await api(writer,authorReply)).status,403);
+  assert.equal((await detail(published.data.id)).status,200);
+  await stop();await start();
+  assert.equal((await request(reader,'/api/auth')).data.user.signedAuthor,true);
+  assert.equal((await detail(published.data.id)).data.replies[0].signed_author,1);
  }finally{await stop();await rm(directory,{recursive:true,force:true})}
 });

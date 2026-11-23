@@ -36,7 +36,7 @@ export async function GET(req:Request){try{
   if(['muted','banned'].includes(status)){where+=' AND c.status=? AND (c.expires IS NULL OR c.expires>?)';values.push(status,Date.now())}
   const from='profiles p LEFT JOIN accounts a ON a.user_id=p.id LEFT JOIN member_controls c ON c.user_id=p.id LEFT JOIN user_roles r ON r.user_id=p.id';
   const count=await db().prepare('SELECT count(*) AS n FROM '+from+' WHERE '+where).bind(...values).first<any>();
-  const rows=await db().prepare('SELECT p.id,p.name,p.created,a.username,r.role,c.status,c.reason,c.expires,(SELECT count(*) FROM posts x WHERE x.author_id=p.id) AS post_count,(SELECT count(*) FROM replies x WHERE x.author_id=p.id) AS reply_count FROM '+from+' WHERE '+where+' ORDER BY p.created DESC,p.id LIMIT 25 OFFSET ?').bind(...values,offset).all();
+  const rows=await db().prepare('SELECT p.id,p.name,p.created,p.signed_author,a.username,r.role,c.status,c.reason,c.expires,(SELECT count(*) FROM posts x WHERE x.author_id=p.id) AS post_count,(SELECT count(*) FROM replies x WHERE x.author_id=p.id) AS reply_count FROM '+from+' WHERE '+where+' ORDER BY p.created DESC,p.id LIMIT 25 OFFSET ?').bind(...values,offset).all();
   return json({items:rows.results.map((r:any)=>({...r,status:r.status&&(!r.expires||r.expires>Date.now())?r.status:'active'})),total:Number(count.n),page});
  }
  if(section==='boards'){requireHigh(role);const rows=await db().prepare('SELECT b.*,(SELECT count(*) FROM posts p WHERE p.board=b.name AND p.deleted=0) AS post_count FROM forum_boards b ORDER BY sort_order,name').all();return json({items:rows.results})}
@@ -123,6 +123,16 @@ export async function POST(req:Request){try{
   const ops=[x.status==='active'?db().prepare('DELETE FROM member_controls WHERE user_id=?').bind(id):db().prepare('INSERT INTO member_controls(user_id,status,reason,expires,updated) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,reason=excluded.reason,expires=excluded.expires,updated=excluded.updated').bind(id,x.status,reason,expires,now),audit(user,'user_control',id,{status:x.status,reason,expires})];
   if(x.status==='banned')ops.push(db().prepare('DELETE FROM sessions WHERE user_id=?').bind(id));await db().batch(ops);return json({ok:true});
  }
+ if(action==='user_signed_author'){
+  requireHigh(role);
+  if(typeof x.signedAuthor!=='boolean')fail('签约身份参数不正确');
+  if(!await db().prepare('SELECT user_id FROM accounts WHERE user_id=?').bind(id).first())fail('仅可设置已注册的社区账号');
+  await db().batch([
+   db().prepare('UPDATE profiles SET signed_author=? WHERE id=?').bind(x.signedAuthor?1:0,id),
+   audit(user,'user_signed_author',id,{signedAuthor:x.signedAuthor})
+  ]);
+  return json({ok:true});
+ }
  if(action==='user_role'){
   requireOwner(role);if(id===user.id||await roleFor(id)==='owner')fail('不能修改站长权限');if(!['member','admin','moderator'].includes(x.role))fail('角色不正确');if(!await db().prepare('SELECT user_id FROM accounts WHERE user_id=?').bind(id).first())fail('仅可授权已注册的社区账号');
   await db().batch([x.role==='member'?db().prepare('DELETE FROM user_roles WHERE user_id=?').bind(id):db().prepare('INSERT INTO user_roles(user_id,role,created) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET role=excluded.role').bind(id,x.role,now),audit(user,'user_role',id,{role:x.role})]);return json({ok:true});
@@ -132,10 +142,11 @@ export async function POST(req:Request){try{
  }
  if(action==='board_save'){
   requireHigh(role);if(typeof x.visible!=='boolean'||typeof x.posting!=='boolean')fail('板块开关参数不正确');const name=clean(x.name,30),group=clean(x.group,30),sort=Number(x.sort),visible=x.visible?1:0,posting=x.posting?1:0;if(name.length<2||group.length<2||!Number.isInteger(sort)||Math.abs(sort)>10000)fail('请填写板块名称、分组和有效排序');
-  const existing=id?await db().prepare('SELECT * FROM forum_boards WHERE id=?').bind(id).first<any>():null;if(id&&!existing)fail('板块不存在',404);const conflicting=await getBoard(name);if(conflicting&&conflicting.id!==id)fail('该板块名或历史名称已被使用');const boardId=id||crypto.randomUUID();const ops:any[]=[];
-  if(existing){if(existing.name!==name){ops.push(db().prepare('UPDATE posts SET board=? WHERE board=?').bind(name,existing.name));ops.push(db().prepare('INSERT OR IGNORE INTO board_aliases(old_name,board_id) VALUES(?,?)').bind(existing.name,id))}ops.push(db().prepare('UPDATE forum_boards SET name=?,group_name=?,sort_order=?,visible=?,posting_enabled=? WHERE id=?').bind(name,group,sort,visible,posting,id))}
-  else ops.push(db().prepare('INSERT INTO forum_boards(id,name,group_name,sort_order,visible,posting_enabled,created) VALUES(?,?,?,?,?,?,?)').bind(boardId,name,group,sort,visible,posting,now));
-  ops.push(audit(user,'board_save',boardId,{name,group,sort,visible,posting,previous:existing?.name||null}));await db().batch(ops);return json({ok:true});
+  if(x.signedAuthorOnly!==undefined&&typeof x.signedAuthorOnly!=='boolean')fail('板块发帖权限参数不正确');
+  const existing=id?await db().prepare('SELECT * FROM forum_boards WHERE id=?').bind(id).first<any>():null;if(id&&!existing)fail('板块不存在',404);const conflicting=await getBoard(name);if(conflicting&&conflicting.id!==id)fail('该板块名或历史名称已被使用');const boardId=id||crypto.randomUUID(),signedAuthorOnly=x.signedAuthorOnly===undefined?(existing?.signed_author_only??0):Number(x.signedAuthorOnly);const ops:any[]=[];
+  if(existing){if(existing.name!==name){ops.push(db().prepare('UPDATE posts SET board=? WHERE board=?').bind(name,existing.name));ops.push(db().prepare('INSERT OR IGNORE INTO board_aliases(old_name,board_id) VALUES(?,?)').bind(existing.name,id))}ops.push(db().prepare('UPDATE forum_boards SET name=?,group_name=?,sort_order=?,visible=?,posting_enabled=?,signed_author_only=? WHERE id=?').bind(name,group,sort,visible,posting,signedAuthorOnly,id))}
+  else ops.push(db().prepare('INSERT INTO forum_boards(id,name,group_name,sort_order,visible,posting_enabled,created,signed_author_only) VALUES(?,?,?,?,?,?,?,?)').bind(boardId,name,group,sort,visible,posting,now,signedAuthorOnly));
+  ops.push(audit(user,'board_save',boardId,{name,group,sort,visible,posting,signedAuthorOnly:!!signedAuthorOnly,previous:existing?.name||null}));await db().batch(ops);return json({ok:true});
  }
  if(action==='settings_save'){
   requireHigh(role);const input=x.settings||{},values:any={};for(const key of Object.keys(defaults)){if(!Object.hasOwn(input,key))continue;const value=input[key];if(['registration_open','posting_open'].includes(key)){if(typeof value!=='boolean')fail('开关参数不正确');values[key]=value}else if(['min_post_interval_seconds','max_post_length','max_reply_length'].includes(key)){if(!Number.isInteger(value)||value<(key==='min_post_interval_seconds'?3:100)||value>(key==='min_post_interval_seconds'?600:20000))fail('发帖限制超出允许范围');values[key]=value}else{if(typeof value!=='string'||!value.trim()||value.length>(key==='community_rules'?6000:key==='announcement_body'?2000:60))fail('公告或公约内容不正确');values[key]=value.trim()}}
